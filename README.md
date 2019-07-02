@@ -3,7 +3,7 @@ Xarray extensions for dealing with ROMS output files.
 
 This is a preliminary version.
 
-REQUIRMENTS:
+REQUIREMENTS:
 <ul>
 <li>Python 3.x</li>
 <li>xarray</li>
