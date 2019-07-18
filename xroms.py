@@ -18,7 +18,7 @@ class xROMSDataArrayAccessor(object):
         ds_l = ds_l.where(ds_l[lat_coords[0]]<area_limits[3],drop=True)
         return ds_l
     
-    def move2grid(self,final_grid,init_grid=False):
+    def move2grid(self,final_grid,init_grid=False,x_prefix='xi',y_prefix='eta'):
         '''
         tempu = move2grid(temp, 'rho', 'u')
 
@@ -27,7 +27,10 @@ class xROMSDataArrayAccessor(object):
         varin = self._data
         if not(init_grid):
             init_grid = self._data.name
-            
+       
+        if init_grid is final_grid:
+            return varin
+        
         if (init_grid == 'rho' and final_grid == 'u'):
             daout = varin.isel(xi_rho=slice(None,-1)).copy()
             varout = 0.5 * (varin.isel(xi_rho=slice(1,None)).values+
@@ -52,6 +55,8 @@ class xROMSDataArrayAccessor(object):
                             varin.isel(xi_v=slice(None,-1)).values)
         else:
             raise ValueError('Undefined combination for init_grid and final_grid')
+        daout = daout.rename({'{0}_{1}'.format(x_prefix,init_grid):'{0}_{1}'.format(x_prefix,final_grid),
+                              '{0}_{1}'.format(y_prefix,init_grid):'{0}_{1}'.format(y_prefix,final_grid)})
         daout.values = varout
         return daout
     
@@ -72,6 +77,8 @@ class xROMSDataSetAccessor(object):
         self._obj['hc'] = self._grid.hc
         self._obj['s_rho'] = self._grid.s_rho
         self._obj['Cs_r'] = self._grid.Cs_r
+        self._obj['pm'] = self._grid.pm
+        self._obj['pn'] = self._grid.pn
         
         @njit(parallel=True)
         def compute_z_r(hc,s_rho,Cs_r,h,zeta):
@@ -98,6 +105,23 @@ class xROMSDataSetAccessor(object):
                                                      self._obj.xi_rho])
         print('Grid Data Loaded')
 
+    def sel_geographic_area(self,area_limits):
+        lon_dims = [d for d in self._obj.dims if "xi" in d]
+        lat_dims = [d for d in self._obj.dims if "eta" in d]
+        mask = {}
+        mask['xi_rho'] = np.logical_and(np.unique(self._obj['lon_rho'])>area_limits[0],
+                                        np.unique(self._obj['lon_rho'])<area_limits[1])
+        mask['eta_rho'] = np.logical_and(np.unique(self._obj['lat_rho'])>area_limits[2],
+                                         np.unique(self._obj['lat_rho'])<area_limits[3])    
+        
+        for d_lon,d_lat in zip(lon_dims,lat_dims):
+            mask[d_lon] = self._obj.sel(mask).xi_rho.values
+            mask[d_lat] = self._obj.sel(mask).eta_rho.values
+            if 'u' in d_lon or 'psi' in d_lon:
+                mask[d_lon] =  mask[d_lon][:-1]
+            if 'v' in d_lat or 'psi' in d_lat:
+                mask[d_lat] =  mask[d_lat][:-1]
+        return self._obj.sel(mask)
 
     def sel_zslice(self,depth):
         @njit(parallel=True)
@@ -137,3 +161,27 @@ class xROMSDataSetAccessor(object):
                 raise Exception("You need at least 3 dimensions to take a slice!")
 
         return(ds_slice)
+        
+    def compute_vorticity(self):
+        pm = self._obj.pm.xroms.move2grid('psi','rho')
+        pn = self._obj.pn.xroms.move2grid('psi','rho')
+        DDxdiff = (pm**-1)
+        DDydiff = (pn**-1)
+        
+        if 'lon_uv' in self._obj.u.dims:
+            u = self._obj.u.xroms.move2grid('psi','rho')
+            v = self._obj.v.xroms.move2grid('psi','rho')
+            UUX,UUY = u.differentiate('lat_psi'),u.differentiate('lon_psi')
+            VVX,VVY = v.differentiate('lat_psi'),v.differentiate('lon_psi')
+        else:
+            u = self._obj.u.xroms.move2grid('psi')
+            v = self._obj.v.xroms.move2grid('psi')
+            UUX,UUY = u.differentiate('eta_psi'),u.differentiate('xi_psi')
+            VVX,VVY = v.differentiate('eta_psi'),v.differentiate('xi_psi')
+
+        omega=7.2921E-5
+        lat_2d = self._obj.lat_rho.xroms.move2grid('psi','rho')
+        f_matrix=2*omega*np.sin(np.deg2rad(lat_2d))
+
+        vorticity=(VVX/(DDxdiff)-UUY/(DDydiff))/f_matrix;
+        return vorticity
