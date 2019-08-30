@@ -33,14 +33,18 @@ class xROMSDataArrayAccessor(object):
              Tuple of flots with the values in the following order:
                (mininal logitude, maximum longitude,
                 mininal latitude, maximum latitude)
+             It is not necessary to pass all limits.
+             If some of the limits of area_limits are None,
+             the algorithm gets the limits from the grid original.
         '''
 
         lon_coords = [c for c in self._data.coords if "lon" in c]
         lat_coords = [c for c in self._data.coords if "lat" in c]
         min_lon, max_lon, min_lat, max_lat = area_limits
 
-        ''' The some of the limits are None
-            the select area will use the rho points as limits.
+        '''
+        If some of the limits are None,
+        the select area will use the rho points as limits.
         '''
         if min_lon is None:
             min_lon = self._data.coords['lon_rho'].min()
@@ -51,8 +55,8 @@ class xROMSDataArrayAccessor(object):
         if max_lat is None:
             max_lat = self._data.coords['lon_rho'].max()
 
-        ds_l = self._data.copy().where(ds_l[lon_coords[0]] > area_limits[0],
-                                       drop=True)
+        ds_l = self._data.where(ds_l[lon_coords[0]] > area_limits[0],
+                                drop=True)
         ds_l = ds_l.where(ds_l[lon_coords[0]] < area_limits[1], drop=True)
         ds_l = ds_l.where(ds_l[lat_coords[0]] > area_limits[2], drop=True)
         ds_l = ds_l.where(ds_l[lat_coords[0]] < area_limits[3], drop=True)
