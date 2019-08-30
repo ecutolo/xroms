@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import xarray as xr
 import numpy as np
@@ -8,7 +8,7 @@ from numba import njit, prange
 @xr.register_dataarray_accessor('xroms')
 class xROMSDataArrayAccessor(object):
     '''
-    Xarray extensions for dealing with ROMS output files.
+    Xarray DataArray extension for dealing with ROMS output files.
 
     Parameters
     ----------
@@ -24,7 +24,7 @@ class xROMSDataArrayAccessor(object):
     def __init__(self, xarray_obj):
         self._data = xarray_obj
 
-    def sel_geographic_area(self, area_limits):
+    def sel_geographic_area(self, area_limits=[None, None, None, None]):
         ''' Function to select a geographic area inside the grid limits.
 
         Parameters
@@ -87,14 +87,10 @@ class xROMSDataArrayAccessor(object):
         elif (init_grid == 'rho' and final_grid == 'psi'):
             daout = varin.isel(eta_rho=slice(None, -1),
                                xi_rho=slice(None, -1)).copy()
-            varout = 0.25 * (varin.isel(xi_rho=slice(1, None),
-                                        eta_rho=slice(1, None)).values +
-                             varin.isel(xi_rho=slice(None, -1),
-                                        eta_rho=slice(None, -1)).values +
-                             varin.isel(xi_rho=slice(None, -1),
-                                        eta_rho=slice(1, None)).values +
-                             varin.isel(xi_rho=slice(1, None),
-                                        eta_rho=slice(None, -1)).values)
+            varout = 0.25 * (varin.isel(xi_rho=slice(1, None), eta_rho=slice(1, None)).values +
+                             varin.isel(xi_rho=slice(None, -1), eta_rho=slice(None, -1)).values +
+                             varin.isel(xi_rho=slice(None, -1), eta_rho=slice(1, None)).values +
+                             varin.isel(xi_rho=slice(1, None), eta_rho=slice(None, -1)).values)
         elif (init_grid == 'u' and final_grid == 'psi'):
             daout = varin.isel(eta_u=slice(None, -1)).copy()
             varout = 0.5 * (varin.isel(eta_u=slice(1, None)).values +
@@ -116,6 +112,19 @@ class xROMSDataArrayAccessor(object):
 
 @xr.register_dataset_accessor('xroms')
 class xROMSDataSetAccessor(object):
+    '''
+    Xarray DataSet extension for dealing with ROMS output files.
+
+    Parameters
+    ----------
+    xarray_obj : xarray.DataSet
+
+    Attributes
+    ----------
+    _data : xarray.DataSet
+         The parameter xarray_obj is stored at this attribute.
+         It represents the ROMS data.
+    '''
 
     def __init__(self, xarray_obj):
         self._data = xarray_obj
@@ -147,6 +156,7 @@ class xROMSDataSetAccessor(object):
         if len(zeta.shape) < 3:
             zeta = np.tile(zeta, (1, 1, 1))
 
+        ''' If s_rho is presented, the grid is for a 3D model '''
         if 's_rho' in self._grid:
             z_r = compute_z_r(float(self._data.hc.values),
                               self._data.s_rho.values,
@@ -154,12 +164,11 @@ class xROMSDataSetAccessor(object):
                               self._data.h.values,
                               zeta)
 
-            self._data['z_r'] = xr.DataArray(z_r,
-                                             coords=[self._data.ocean_time,
-                                                     self._data.s_rho,
-                                                     self._data.eta_rho,
-                                                     self._data.xi_rho])
-            print('Grid Data Loaded')
+            self._data['z_r'] = xr.DataArray(z_r, coords=[self._data.ocean_time,
+                                                          self._data.s_rho,
+                                                          self._data.eta_rho,
+                                                          self._data.xi_rho])
+        print('Grid Data Loaded')
 
     @njit(parallel=True)
     def compute_z_r(hc, s_rho, Cs_r, h, zeta):
@@ -167,7 +176,7 @@ class xROMSDataSetAccessor(object):
         for tt in prange(zeta.shape[0]):
             for kk in prange(s_rho.shape[0]):
                 z0 = (hc * s_rho[kk] + h * Cs_r[kk]) / (hc + h)
-                z_r[tt, kk, :] = zeta[tt, :] + (zeta[tt, :] + h)*z0
+                z_r[tt, kk, :] = zeta[tt, :] + (zeta[tt, :] + h) * z0
         return(z_r)
 
     def sel_geographic_area(self, area_limits):
@@ -192,26 +201,26 @@ class xROMSDataSetAccessor(object):
                 mask[d_lat] = mask[d_lat][:-1]
         return self._data.sel(mask)
 
-    def sel_zslice(self, depth):
-        @njit(parallel=True)
-        def fast_get_zslice(data, depth, z_r):
-            int_data = np.nan*np.ones((z_r.shape[0]+1,
-                                       z_r.shape[2],
-                                       z_r.shape[3]))
-            for t in prange(z_r.shape[0]):
-                for i in prange(data.shape[3]):
-                    for j in prange(data.shape[2]):
-                        if depth > z_r[t, 0, j, i]:
-                            idx = np.searchsorted(z_r[t, :, j, i],
-                                                  depth, side="right")
-                            delta_d1 = np.abs(depth-z_r[t, idx-1, j, i])
-                            delta_d2 = np.abs(depth-z_r[t, idx+1, j, i])
-                            int_data[t, j, i] = (data[t, idx+1, j, i] *
-                                                 delta_d1 +
-                                                 data[t, idx-1, j, i] *
-                                                 delta_d2)/(delta_d1+delta_d2)
-            return(int_data[:-1, :, :])
+    @njit(parallel=True)
+    def fast_get_zslice(self, data, depth, z_r):
+        int_data = np.nan * np.ones((z_r.shape[0] + 1,
+                                     z_r.shape[2],
+                                     z_r.shape[3]))
+        for t in prange(z_r.shape[0]):
+            for i in prange(data.shape[3]):
+                for j in prange(data.shape[2]):
+                    if depth > z_r[t, 0, j, i]:
+                        idx = np.searchsorted(z_r[t, :, j, i],
+                                              depth, side="right")
+                        delta_d1 = np.abs(depth - z_r[t, idx - 1, j, i])
+                        delta_d2 = np.abs(depth - z_r[t, idx + 1, j, i])
+                        int_data[t, j, i] = (data[t, idx + 1, j, i] *
+                                             delta_d1 +
+                                             data[t, idx - 1, j, i] *
+                                             delta_d2) / (delta_d1 + delta_d2)
+        return(int_data[:-1, :, :])
 
+    def sel_zslice(self, depth):
         ds_slice = self._data.isel(s_rho=0).copy()
         ds_slice = ds_slice.rename({'s_rho': 'depth'})
         ds_slice['depth'] = depth
@@ -226,11 +235,11 @@ class xROMSDataSetAccessor(object):
             data = self._data[varname].values
 
             if len(data.shape) is 4 and len(z_r.shape) is 4:
-                data_slice = fast_get_zslice(data, depth, z_r)
+                data_slice = self.fast_get_zslice(data, depth, z_r)
                 ds_slice[varname].values = data_slice
             elif len(data.shape) is 3 and len(z_r.shape) is 3:
-                data_slice = fast_get_zslice(np.tile(data, (1, 1, 1, 1)),
-                                             depth, np.tile(z_r, (1, 1, 1, 1)))
+                data_slice = self.fast_get_zslice(np.tile(data, (1, 1, 1, 1)),
+                                                  depth, np.tile(z_r, (1, 1, 1, 1)))
                 ds_slice[varname].values = data_slice[0]
             else:
                 raise Exception("You need at least 3 \
@@ -257,7 +266,7 @@ class xROMSDataSetAccessor(object):
 
         omega = 7.2921E-5
         lat_2d = self._data.lat_rho.xroms.move2grid('psi', 'rho')
-        f_matrix = 2*omega*np.sin(np.deg2rad(lat_2d))
+        f_matrix = 2 * omega * np.sin(np.deg2rad(lat_2d))
 
-        vorticity = (VVX/(DDxdiff)-UUY/(DDydiff))/f_matrix
+        vorticity = (VVX / (DDxdiff) - UUY / (DDydiff)) / f_matrix
         return vorticity
