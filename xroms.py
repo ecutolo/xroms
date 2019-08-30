@@ -221,8 +221,7 @@ class xROMSDataSetAccessor(object):
         return(int_data[:-1, :, :])
 
     def sel_zslice(self, depth):
-        ds_slice = self._data.isel(s_rho=0).copy()
-        ds_slice = ds_slice.rename({'s_rho': 'depth'})
+        ds_slice = self._data.isel(s_rho=0).rename({'s_rho': 'depth'})
         ds_slice['depth'] = depth
         for varname in self._3d_vars:
             if varname is 'z_r':
