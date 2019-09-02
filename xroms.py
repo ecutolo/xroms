@@ -147,7 +147,7 @@ class xROMSDataSetAccessor(object):
         self._grid = xr.open_dataset(grid_file)
 
         if variables is None:
-            variables = [k for k in self._grid.keys()]
+            variables = ['h', 'hc', 's_rho', 'Cs_r', 'pm', 'pn']
 
         for variable in variables:
             self.load_grid_variable(variable)
