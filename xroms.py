@@ -144,6 +144,16 @@ class xROMSDataSetAccessor(object):
         self._data[variable] = self._grid[variable]
 
     def load_grid(self, grid_file: str, variables: List[str] = None):
+        
+        @njit(parallel=True)
+        def compute_z_r(hc, s_rho, Cs_r, h, zeta):
+            z_r = np.ones((zeta.shape[0], s_rho.shape[0], h.shape[0], h.shape[1]))
+            for tt in prange(zeta.shape[0]):
+                for kk in prange(s_rho.shape[0]):
+                    z0 = (hc * s_rho[kk] + h * Cs_r[kk]) / (hc + h)
+                    z_r[tt, kk, :] = zeta[tt, :] + (zeta[tt, :] + h) * z0
+            return(z_r)
+        
         self._grid = xr.open_dataset(grid_file)
 
         if variables is None:
@@ -170,27 +180,15 @@ class xROMSDataSetAccessor(object):
                                                           self._data.xi_rho])
         print('Grid Data Loaded')
 
-    @njit(parallel=True)
-    def compute_z_r(hc, s_rho, Cs_r, h, zeta):
-        z_r = np.ones((zeta.shape[0], s_rho.shape[0], h.shape[0], h.shape[1]))
-        for tt in prange(zeta.shape[0]):
-            for kk in prange(s_rho.shape[0]):
-                z0 = (hc * s_rho[kk] + h * Cs_r[kk]) / (hc + h)
-                z_r[tt, kk, :] = zeta[tt, :] + (zeta[tt, :] + h) * z0
-        return(z_r)
 
     def sel_geographic_area(self, area_limits):
         lon_dims = [d for d in self._data.dims if "xi" in d]
         lat_dims = [d for d in self._data.dims if "eta" in d]
         mask = {}
-        mask['xi_rho'] = np.logical_and(np.unique(self._data['lon_rho']) >
-                                        area_limits[0],
-                                        np.unique(self._data['lon_rho']) <
-                                        area_limits[1])
-        mask['eta_rho'] = np.logical_and(np.unique(self._data['lat_rho']) >
-                                         area_limits[2],
-                                         np.unique(self._data['lat_rho']) <
-                                         area_limits[3])
+        mask['xi_rho'] = np.logical_and(self._data['lon_rho'][0,:] > area_limits[0],
+                                        self._data['lon_rho'][0,:] < area_limits[1])
+        mask['eta_rho'] = np.logical_and(self._data['lat_rho'][:,0] > area_limits[2],
+                                         self._data['lat_rho'][:,0] < area_limits[3])
 
         for d_lon, d_lat in zip(lon_dims, lat_dims):
             mask[d_lon] = self._data.sel(mask).xi_rho.values
